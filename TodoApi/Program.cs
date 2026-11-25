@@ -8,6 +8,8 @@ using Microsoft.OpenApi;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 
 var builder = WebApplication.CreateBuilder(args);
+// סודות (מפתח JWT וסיסמת מסד הנתונים) יושבים בקובץ מקומי שלא עולה לגיט, או במשתני סביבה בשרת
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
 builder.Services.AddDbContext<ToDoDbContext>(options =>
     options.UseMySql(builder.Configuration.GetConnectionString("ToDoDB"),
@@ -63,28 +65,38 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapGet("/", () => "Hello World!");
-app.MapGet("/api/items", async (ToDoDbContext db) => await db.Items.ToListAsync()).RequireAuthorization();
-app.MapPost("/api/items", async (ToDoDbContext db, Item item) =>
+// כל משתמש רואה ומשנה רק את המשימות שלו - ה-id נלקח מהטוקן
+app.MapGet("/api/items", async (ToDoDbContext db, ClaimsPrincipal user) =>
 {
+    var userId = GetUserId(user);
+    return await db.Items.Where(i => i.UserId == userId).ToListAsync();
+}).RequireAuthorization();
+
+app.MapPost("/api/items", async (ToDoDbContext db, Item item, ClaimsPrincipal user) =>
+{
+    item.UserId = GetUserId(user);//לא סומכים על מה שהלקוח שולח
     db.Items.Add(item);
     await db.SaveChangesAsync();
     return Results.Created($"/api/items/{item.Id}", item);
 }).RequireAuthorization();
 
-app.MapPut("/api/items/{id}", async (ToDoDbContext db, int id, Item updatedItem) =>
+app.MapPut("/api/items/{id}", async (ToDoDbContext db, int id, Item updatedItem, ClaimsPrincipal user) =>
 {
-    var item = await db.Items.FindAsync(id);
+    var userId = GetUserId(user);
+    var item = await db.Items.FirstOrDefaultAsync(i => i.Id == id && i.UserId == userId);
     if (item is null) return Results.NotFound();
-    item.IsComplete = updatedItem.IsComplete;
+    if (updatedItem.IsComplete.HasValue)//לא דורסים את הסימון אם הלקוח לא שלח אותו
+        item.IsComplete = updatedItem.IsComplete;
     if (!string.IsNullOrEmpty(updatedItem.Name))
         item.Name = updatedItem.Name;
     await db.SaveChangesAsync();
     return Results.NoContent();
 }).RequireAuthorization();
 
-app.MapDelete("/api/items/{id}", async (ToDoDbContext db, int id) =>
+app.MapDelete("/api/items/{id}", async (ToDoDbContext db, int id, ClaimsPrincipal user) =>
 {
-    var item = await db.Items.FindAsync(id);
+    var userId = GetUserId(user);
+    var item = await db.Items.FirstOrDefaultAsync(i => i.Id == id && i.UserId == userId);
     if (item is null) return Results.NotFound();
     db.Items.Remove(item);
     await db.SaveChangesAsync();
@@ -95,16 +107,25 @@ app.MapPost("/api/register", async (ToDoDbContext db, UserDto dto) =>
 {
     if (string.IsNullOrWhiteSpace(dto.UserName) || string.IsNullOrWhiteSpace(dto.Password))
         return Results.BadRequest("Username and password are required");
-    var exists = await db.Users.AnyAsync(user => user.UserName == dto.UserName);
+    var userName = dto.UserName.Trim();
+    var exists = await db.Users.AnyAsync(user => user.UserName == userName);
     if(exists)
         return Results.Conflict("Username already exists");
     var user=new User
     {
-        UserName=dto.UserName,
+        UserName=userName,
         Password=BCrypt.Net.BCrypt.HashPassword(dto.Password)
     };
     db.Users.Add(user);
-    await db.SaveChangesAsync();
+    try
+    {
+        await db.SaveChangesAsync();
+    }
+    catch (DbUpdateException)
+    {
+        // בקשות במקביל עוברות את הבדיקה למעלה; האינדקס UNIQUE במסד הוא זה שחוסם בפועל
+        return Results.Conflict("Username already exists");
+    }
     return Results.Ok(new{user.Id, user.UserName });
 });
 
@@ -113,7 +134,8 @@ app.MapPost("/api/login", async (ToDoDbContext db, UserDto dto, IConfiguration c
     if (string.IsNullOrWhiteSpace(dto.UserName) || string.IsNullOrWhiteSpace(dto.Password))
         return Results.BadRequest("Username and password are required");
 
-    var user = await db.Users.FirstOrDefaultAsync(u => u.UserName == dto.UserName);
+    var loginName = dto.UserName.Trim();
+    var user = await db.Users.FirstOrDefaultAsync(u => u.UserName == loginName);
     if (user is null || !BCrypt.Net.BCrypt.Verify(dto.Password, user.Password))
         return Results.Unauthorized();
 
@@ -138,5 +160,7 @@ app.MapPost("/api/login", async (ToDoDbContext db, UserDto dto, IConfiguration c
 });
 
 app.Run();
+
+static int GetUserId(ClaimsPrincipal user) => int.Parse(user.FindFirst("id")!.Value);
 
 public record UserDto(string UserName, string Password);

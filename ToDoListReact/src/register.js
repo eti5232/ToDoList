@@ -6,20 +6,25 @@ function Register() {
   const [userName, setUserName] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (loading) return;//בקשה כבר בדרך - מתעלמים מלחיצות נוספות
+    setLoading(true);
+    setError("");
     try {
-      await service.register(userName, password);
-      await service.login(userName, password);//מתחברים אוטומטית עם הפרטים שהרגע נרשמו
+      await service.register(userName.trim(), password);
+      await service.login(userName.trim(), password);//מתחברים אוטומטית עם הפרטים שהרגע נרשמו
       navigate("/");
     } catch (err) {
       if (err.response && err.response.status === 409) {
-        setError("שם המשתמש כבר קיים");
+        setError("לא ניתן ליצור משתמש נוסף - שם המשתמש כבר קיים");
       } else {
         setError("ההרשמה נכשלה");
       }
+      setLoading(false);
     }
   }
 
@@ -34,7 +39,9 @@ function Register() {
         <input className="input" type="password" placeholder="סיסמה" value={password}
           onChange={(e) => setPassword(e.target.value)} />
         {error && <p className="error">{error}</p>}
-        <button type="submit" className="btn btn-primary">הרשמה</button>
+        <button type="submit" className="btn btn-primary" disabled={loading}>
+          {loading ? "נרשמת..." : "הרשמה"}
+        </button>
       </form>
 
       <p className="divider">כבר יש לך חשבון?</p>

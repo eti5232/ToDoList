@@ -6,15 +6,24 @@ function Login() {
   const [userName, setUserName] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (loading) return;
+    setLoading(true);
+    setError("");
     try {
-      await service.login(userName, password);
+      await service.login(userName.trim(), password);
       navigate("/");
-    } catch {
-      setError("שם משתמש או סיסמה שגויים");
+    } catch (err) {
+      if (err.response && err.response.status === 401) {
+        setError("שם משתמש או סיסמה שגויים");
+      } else {
+        setError("ההתחברות נכשלה, נסי שוב מאוחר יותר");
+      }
+      setLoading(false);
     }
   }
 
@@ -29,7 +38,9 @@ function Login() {
         <input className="input" type="password" placeholder="סיסמה" value={password}
           onChange={(e) => setPassword(e.target.value)} />
         {error && <p className="error">{error}</p>}
-        <button type="submit" className="btn btn-primary">התחברות</button>
+        <button type="submit" className="btn btn-primary" disabled={loading}>
+          {loading ? "מתחברת..." : "התחברות"}
+        </button>
       </form>
 
       <p className="divider">עדיין אין לך חשבון?</p>

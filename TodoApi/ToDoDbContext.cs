@@ -36,6 +36,12 @@ public partial class ToDoDbContext : DbContext
             entity.ToTable("items");
 
             entity.Property(e => e.Name).HasMaxLength(100);
+
+            entity.HasOne<User>()
+                .WithMany()
+                .HasForeignKey(e => e.UserId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_items_users");
         });
 
         modelBuilder.Entity<User>(entity =>
@@ -46,6 +52,7 @@ public partial class ToDoDbContext : DbContext
 
             entity.Property(e => e.Password).HasMaxLength(255);
             entity.Property(e => e.UserName).HasMaxLength(50);
+            entity.HasIndex(e => e.UserName, "UQ_users_UserName").IsUnique();
         });
 
         OnModelCreatingPartial(modelBuilder);
